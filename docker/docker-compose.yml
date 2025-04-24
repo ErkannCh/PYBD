@@ -33,7 +33,7 @@ services:
     networks:
       - boursenet
     volumes:
-      - /home/enroot/epita/s8/pyhton_BigData/project/data:/home/bourse/data
+      - /home/enroot/epita/s8/pyhton_BigData/PYBD/data:/home/bourse/data
 
   dashboard:
     image: my_dashboard

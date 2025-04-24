@@ -1,221 +1,192 @@
-#!/usr/bin/env python3
-import os, re, time, glob, bz2
-import numpy as np, pandas as pd
+import os
+import glob
+import time
+import re
+import csv
+
+import pandas as pd
 import timescaledb_model as tsdb
 
-TSDB  = tsdb.TimescaleStockMarketModel
-HOME  = "/home/bourse/data/"
-TRIAL_SEPS = [',',';','\t']
-_TS_RE = re.compile(
-    r'(\d{4}-\d{2}-\d{2}[ _T]\d{2}[:\-]\d{2}[:\-]\d{2}(?:\.\d+)?)'
-)
+TSDB = tsdb.TimescaleStockMarketModel
+HOME = "/home/bourse/data/"   # on s'attend à sous-dossiers euronext/ et boursorama/
 
-def timer_decorator(fn):
-    def wrapper(*a, **kw):
+
+def get_all_files(website: str) -> list[str]:
+    pattern = os.path.join(HOME, website, "**", "*")
+    return glob.glob(pattern, recursive=True)
+
+
+def detect_header_csv(path: str) -> pd.DataFrame:
+    with open(path, encoding="utf-8", errors="ignore") as f:
+        lines = f.readlines()
+    for idx, line in enumerate(lines):
+        if re.search(r"\bName\b.*\bISIN\b.*\bSymbol\b", line):
+            cols = re.split(r"\s{2,}|\t", line.strip())
+            break
+    else:
+        raise ValueError(f"Header introuvable dans {path}")
+    return pd.read_csv(
+        path,
+        engine="python",
+        sep=r"\s{2,}|\t",
+        header=None,
+        names=cols,
+        skiprows=idx + 1,
+        quoting=csv.QUOTE_NONE,
+        on_bad_lines="skip"
+    )
+
+
+def detect_header_xlsx(path: str) -> pd.DataFrame:
+    raw = pd.read_excel(path, header=None, engine="openpyxl")
+    for idx, row in raw.iterrows():
+        vals = row.astype(str).str.strip().tolist()
+        if {"Name", "ISIN", "Symbol"}.issubset(vals):
+            header = vals
+            df = raw.iloc[idx + 1 :].copy()
+            df.columns = header
+            df = df[df["ISIN"].notna() & df["Symbol"].notna()]
+            return df
+    raise ValueError(f"Header introuvable dans {path}")
+
+
+def compute_csv(path: str, start_dt, end_dt) -> pd.DataFrame:
+    df = detect_header_csv(path)
+    df = df.dropna(subset=["Last Date/Time", "Symbol"])
+    df["datetime"] = pd.to_datetime(
+        df["Last Date/Time"].str.strip(),
+        format="%d/%m/%y %H:%M",
+        errors="coerce"
+    )
+    df = df[(df["datetime"] >= start_dt) & (df["datetime"] <= end_dt)]
+    return pd.DataFrame({
+        "date":   df["datetime"].dt.floor("D"),
+        "symbol": df["Symbol"],
+        "cid":    None,
+        "open":   pd.to_numeric(df["Open"],  errors="coerce"),
+        "close":  pd.to_numeric(df["Last"],  errors="coerce"),
+        "high":   pd.to_numeric(df["High"],  errors="coerce"),
+        "low":    pd.to_numeric(df["Low"],   errors="coerce"),
+        "volume": pd.to_numeric(df["Volume"],errors="coerce"),
+        "mean":   None,
+        "std":    None,
+    }).dropna(subset=["date","open","close","high","low","volume"])
+
+
+def compute_xlsx(path: str, start_dt, end_dt) -> pd.DataFrame:
+    df = detect_header_xlsx(path)
+    df = df.dropna(subset=["last Trade MIC Time", "Symbol"])
+    df["datetime"] = pd.to_datetime(
+        df["last Trade MIC Time"].str.strip(),
+        format="%d/%m/%Y %H:%M",
+        errors="coerce"
+    )
+    df = df[(df["datetime"] >= start_dt) & (df["datetime"] <= end_dt)]
+    return pd.DataFrame({
+        "date":   df["datetime"].dt.floor("D"),
+        "symbol": df["Symbol"],
+        "cid":    None,
+        "open":   pd.to_numeric(df["Open Price"], errors="coerce"),
+        "close":  pd.to_numeric(df["last Price"],  errors="coerce"),
+        "high":   pd.to_numeric(df["High Price"], errors="coerce"),
+        "low":    pd.to_numeric(df["low Price"],  errors="coerce"),
+        "volume": pd.to_numeric(df["Volume"],     errors="coerce"),
+        "mean":   None,
+        "std":    None,
+    }).dropna(subset=["date","open","close","high","low","volume"])
+
+
+# ----------------------------------------
+# Décorateur de timing
+# ----------------------------------------
+def timer_decorator(func):
+    def wrapper(*args, **kwargs):
         t0 = time.time()
-        res = fn(*a, **kw)
-        print(f"{fn.__name__} completed in {time.time()-t0:.2f}s")
+        res = func(*args, **kwargs)
+        print(f"{func.__name__} → {time.time()-t0:.2f}s")
         return res
     return wrapper
 
-def detect_and_load_csv(path, compression):
-    """robust CSV/TSV loader with delimiter sniffing & compression handling"""
-    try:
-        return pd.read_csv(path, sep=None, engine='python',
-                           compression=compression, encoding='latin-1')
-    except Exception:
-        open_func = {'bz2': bz2.open}.get(compression, open)
-        with open_func(path, 'rt', encoding='latin-1', errors='ignore') as fh:
-            header = fh.readline()
-            for sep in TRIAL_SEPS:
-                if sep in header:
-                    fh.seek(0)
-                    return pd.read_csv(fh, sep=sep, encoding='latin-1')
-        return pd.read_csv(path, sep=',', engine='python',
-                           compression=compression, encoding='latin-1')
+@timer_decorator
+def store_companies(files: list[str], db: TSDB):
+    market_map = {
+        "Euronext Paris":            6,
+        "Euronext Growth Paris":     6,
+        "Euronext Access Paris":     6,
+        "Euronext Brussels, Paris":  6,
+    }
 
-def timestamp_from_filename(path: str) -> pd.Timestamp|None:
-    """pull  ‘YYYY-MM-DD hh:mm:ss[.ffffff]’  from *anywhere* in basename"""
-    base = os.path.basename(path)
-    while True:
-        root, ext = os.path.splitext(base)
-        if not ext:
-            break
-        base = root
-    m = _TS_RE.search(base)
-    if not m:
-        return None
-    try:
-        return pd.to_datetime(m.group(1))
-    except ValueError:
-        return None
+    comps = []
+    for file in files:
+        if file.endswith(".csv"):
+            df = detect_header_csv(file)
+        else:
+            df = detect_header_xlsx(file)
+        df = df[df["ISIN"].notna() & df["Symbol"].notna()]
+        comps.append(df[["Name","ISIN","Symbol","Market"]])
+
+    allc = pd.concat(comps, ignore_index=True)
+    allc = allc.drop_duplicates(subset=["Symbol","ISIN"])
+    allc["mid"] = allc["Market"].map(market_map).fillna(0).astype(int)
+
+    df_comp = pd.DataFrame({
+        "name"      : allc["Name"],
+        "mid"       : allc["mid"],
+        "symbol"    : allc["Symbol"],
+        "isin"      : allc["ISIN"],
+        "boursorama": None,
+        "euronext"  : allc["Symbol"],
+        "pea"       : False,
+        "sector1"   : None,
+        "sector2"   : None,
+        "sector3"   : None,
+    })
+    db.execute("TRUNCATE TABLE companies RESTART IDENTITY CASCADE;", commit=True)
+    db.df_write(df_comp, "companies", if_exists="append", index=False)
+    db.commit()
+    print(f"✓ {len(df_comp)} entreprises insérées dans companies.")
 
 @timer_decorator
-def store_files(start: str, end: str, source: str, db: TSDB) -> None:
-    start_dt, end_dt = map(pd.to_datetime, (start, end))
+def store_files(start: str, end: str, website: str, db: TSDB):
+    start_dt = pd.to_datetime(start)
+    end_dt   = pd.to_datetime(end)
 
-    if source not in {'euronext', 'bourso'}:
-        print(f"Unknown source {source}")
-        return
+    files = get_all_files(website)
+    store_companies(files, db)
 
-    src_dir = os.path.join(HOME, source)
-    files   = [f for f in glob.glob(os.path.join(src_dir, '**', '*'),
-                                    recursive=True) if os.path.isfile(f)]
-    if not files:
-        print(f"No data files in {src_dir}")
-        return
+    map_df        = db.df_query("SELECT id, euronext AS symbol FROM companies")
+    symbol_to_cid = dict(zip(map_df["symbol"], map_df["id"]))
 
-    frames = []
-    for fn in files:
-        ext = fn.lower()
-
-        try:
-            if source == 'euronext':
-                if ext.endswith(('.csv','.txt','.tsv','.bz2','.gz','.zip','.gz2')):
-                    df = detect_and_load_csv(fn, compression='infer')
-                elif ext.endswith(('.xls', '.xlsx')):
-                    df = pd.read_excel(fn)
-                else:
-                    continue
-            else:                       # bourso
-                if ext.endswith(('.pkl','.bz2','.gz','.gz2','.zip')):
-                    try:
-                        df = pd.read_pickle(fn, compression='infer')
-                    except Exception:
-                        comp = 'gzip' if ext.endswith('.gz2') else 'infer'
-                        df  = detect_and_load_csv(fn, compression=comp)
-                elif ext.endswith(('.csv','.txt','.tsv')):
-                    df = detect_and_load_csv(fn, compression=None)
-                else:
-                    continue
-        except Exception as e:
-            print(f"Failed loading {fn}: {e}")
-            continue
-
-        if df is None or df.empty:
-            continue
-
-        df.columns = [re.sub(r'[^0-9A-Za-z]+', '_', str(c)).lower().strip('_')
-                      for c in df.columns]
-
-        if source == 'bourso':
-            print(f"Loaded bourso file {fn} columns: {df.columns.tolist()}")
-
-        price_map = dict(open='price_open', high='price_high',
-                         low='price_low', close='price_close', last='price_close')
-        df.rename(columns={k:v for k,v in price_map.items() if k in df.columns},
-                  inplace=True)
-
-        if source == 'euronext':
-            for alt in ('timestamp','last_date_time','last_datetime',
-                        'last_trade_mic_time','closing_price_datetime'):
-                if alt in df.columns:
-                    df.rename(columns={alt: 'timestamp'}, inplace=True)
-                    break
-
-            if 'timestamp' not in df.columns and {'date','time'}.issubset(df.columns):
-                df['timestamp'] = (df['date'].astype(str).str.strip() + ' ' +
-                                   df['time'].astype(str).str.strip())
-
-            ts_dupes = [c for c in df.columns if c != 'timestamp' and
-                                               c.startswith('timestamp')]
-            if ts_dupes:
-                df.drop(columns=ts_dupes, inplace=True)
-
+    all_days = []
+    for file in files:
+        if website == "euronext":
+            if file.endswith(".csv"):
+                df_day = compute_csv(file, start_dt, end_dt)
+            else:
+                df_day = compute_xlsx(file, start_dt, end_dt)
         else:
-            if 'symbol' not in df.columns:
-                for alt in ('ticker','isin','name'):
-                    if alt in df.columns:
-                        df.rename(columns={alt:'symbol'}, inplace=True)
-                        break
-            if 'timestamp' not in df.columns:
-                for alt in ('date','datetime','date_time','last_datetime'):
-                    if alt in df.columns:
-                        df.rename(columns={alt:'timestamp'}, inplace=True)
-                        break
-            if 'timestamp' not in df.columns and isinstance(df.index, pd.DatetimeIndex):
-                df.index.name = None
-                df = df.reset_index().rename(columns={'index':'timestamp'})
-            if 'timestamp' not in df.columns:
-                ts = timestamp_from_filename(fn)
-                if ts is not None:
-                    df['timestamp'] = ts
-                    print(f"[bourso] {os.path.basename(fn)} ⇒ timestamp {ts}")
-
-        if 'timestamp' not in df.columns or 'symbol' not in df.columns:
-            print(f"Missing critical columns in {fn}, columns were: {df.columns.tolist()}")
+            # TODO: gérer boursorama via pickle
             continue
 
-        if source == 'euronext':
-            df['timestamp'] = pd.to_datetime(df['timestamp'], dayfirst=True, errors='coerce')
-        else:
-            df['timestamp'] = pd.to_datetime(df['timestamp'],
-                                             format='%Y-%m-%d %H:%M:%S.%f',
-                                             errors='coerce')
-            mask = df['timestamp'].isna()
-            if mask.any():
-                df.loc[mask,'timestamp'] = pd.to_datetime(df.loc[mask,'timestamp'],
-                                                          format='%Y-%m-%d %H:%M:%S',
-                                                          errors='coerce')
-            mask = df['timestamp'].isna()
-            if mask.any():
-                df.loc[mask,'timestamp'] = pd.to_datetime(df.loc[mask,'timestamp'],
-                                                          format='%d/%m/%Y %H:%M:%S',
-                                                          dayfirst=True,
-                                                          errors='coerce')
+        df_day["cid"] = df_day["symbol"].map(symbol_to_cid)
+        df_day = df_day.dropna(subset=["cid"])
+        df_day["cid"] = df_day["cid"].astype(int)
 
-        df.dropna(subset=['timestamp'], inplace=True)
+        all_days.append(df_day)
 
-        df = df[(start_dt <= df['timestamp']) & (df['timestamp'] < end_dt)]
-        if df.empty:
-            continue
-
-        df['symbol'] = df['symbol'].astype(str).str.strip()
-        for col in ('price_open','price_high','price_low','price_close','volume'):
-            if col in df.columns:
-                df[col] = (df[col].astype(str)
-                                 .replace({'-':np.nan,'':np.nan}, regex=False)
-                                 .str.replace(',','', regex=False)
-                                 .pipe(pd.to_numeric, errors='coerce'))
-        if 'volume' not in df.columns:
-            df['volume'] = np.nan
-
-        frames.append(df)
-
-    if not frames:
-        print(f"No valid data loaded for {source}")
-        return
-
-    data = pd.concat(frames, ignore_index=True).drop_duplicates(['symbol','timestamp'])
-
-    for sym in data['symbol'].unique():
-        if not db.raw_query("SELECT id FROM companies WHERE symbol=%s", (sym,)):
-            db.execute("INSERT INTO companies(name,symbol,euronext,boursorama)"
-                       "VALUES(%s,%s,%s,%s)",
-                       (sym, sym,
-                        sym if source=='euronext' else None,
-                        sym if source=='bourso'   else None))
+    full_df = pd.concat(all_days, ignore_index=True).drop(columns=["symbol"])
+    print(f"Insertion en base : {len(full_df):,} lignes")
+    db.df_write(full_df, "daystocks", if_exists="append", index=False)
     db.commit()
 
-    cid = {sym: cid for cid, sym in db.raw_query("SELECT id,symbol FROM companies")}
-    data['cid'] = data['symbol'].map(cid)
 
-    if source == 'euronext':
-        data['mean'] = data[['price_open','price_high','price_low','price_close']].mean(1)
-        data['std']  = data[['price_open','price_high','price_low','price_close']].std(1)
-        out = data.rename(columns={'timestamp':'date',
-                                   'price_open':'open',
-                                   'price_close':'close',
-                                   'price_high':'high',
-                                   'price_low':'low'})
-        db.df_write(out[['date','cid','open','close','high','low',
-                         'volume','mean','std']], 'daystocks', commit=True)
-    else:
-        out = data.rename(columns={'timestamp':'date', 'price_close':'value'})
-        db.df_write(out[['date','cid','value','volume']], 'stocks', commit=True)
+# ----------------------------------------
+# Main
+# ----------------------------------------
+if __name__ == "__main__":
+    print("Go Extract Transform and Load")
+    pd.set_option("display.max_columns", None)
 
-if __name__ == '__main__':
-    print("Starting ETL process...")
-    db = TSDB('bourse','ricou','db','monmdp')
-    store_files('2019-01-01','2024-12-31','euronext', db)
-    store_files('2019-01-01','2024-12-31','bourso',   db)
+    db = TSDB("bourse", "ricou", "db", "monmdp")
+    store_files("2020-01-01", "2020-02-01", "euronext", db)
+    print("Done ETL.")
