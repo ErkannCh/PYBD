@@ -10,15 +10,24 @@ import timescaledb_model as tsdb
 TSDB = tsdb.TimescaleStockMarketModel
 HOME = "/home/bourse/data/"   # on s'attend à sous-dossiers euronext/ et boursorama/
 
-
-def get_all_files(website: str) -> list[str]:
-    pattern = os.path.join(HOME, website, "**", "*")
-    return glob.glob(pattern, recursive=True)
+def get_all_files(website: str, start, end) -> list[str]:
+    result = []
+    if website == "euronext":
+        pattern = os.path.join(HOME, website, "*")
+    else:
+        pattern = os.path.join(HOME, website, "20*", "*")
+    files = glob.glob(pattern, recursive=True)
+    for file in files:
+        m = re.search(r"(\d{4}-\d{2}-\d{2})", os.path.basename(file))
+        file_date = pd.to_datetime(m.group(1), errors='coerce')
+        if start <= file_date <= end:
+            result.append(file)
+    return sorted(result)
 
 
 def detect_header_csv(path: str) -> pd.DataFrame:
     with open(path, encoding="utf-8", errors="ignore") as f:
-        lines = f.readlines()
+        lines = f.readlines() 
     for idx, line in enumerate(lines):
         if re.search(r"\bName\b.*\bISIN\b.*\bSymbol\b", line):
             cols = re.split(r"\s{2,}|\t", line.strip())
@@ -96,6 +105,9 @@ def compute_xlsx(path: str, start_dt, end_dt) -> pd.DataFrame:
     }).dropna(subset=["date","open","close","high","low","volume"])
 
 
+def compute_gz2(path: str) -> pd.DataFrame:
+    return pd.read_pickle(path)
+
 # ----------------------------------------
 # Décorateur de timing
 # ----------------------------------------
@@ -141,43 +153,65 @@ def store_companies(files: list[str], db: TSDB):
         "sector2"   : None,
         "sector3"   : None,
     })
-    db.execute("TRUNCATE TABLE companies RESTART IDENTITY CASCADE;", commit=True)
+    db.execute("TRUNCATE TABLE companies CASCADE;", commit=True)
+    db.execute("ALTER SEQUENCE company_id_seq RESTART WITH 1;", commit=True)
     db.df_write(df_comp, "companies", if_exists="append", index=False)
     db.commit()
     print(f"✓ {len(df_comp)} entreprises insérées dans companies.")
+
+
+def store_stocks(df, file, start_dt, end_dt, db: TSDB) -> pd.DataFrame:
+    m = re.search(
+        r"(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2}(?:\.\d+)?))",
+        os.path.basename(file)
+    )
+
+    file_dt = pd.to_datetime(m.group(1), errors="coerce")
+    df = df.copy()
+    df["value"]  = pd.to_numeric(df["last"],   errors="coerce")
+    df["volume"] = pd.to_numeric(df["volume"], errors="coerce")
+    df = df.dropna(subset=["symbol","value","volume"])
+    df["base_symbol"] = df["symbol"].str.replace(r"^1rP", "", regex=True)
+    comp = db.df_query("SELECT id AS cid, symbol FROM companies")
+    symbol2cid = dict(zip(comp["symbol"], comp["cid"]))
+    df["cid"] = df["base_symbol"].map(symbol2cid)
+    df = df.dropna(subset=["cid"])
+    df["cid"] = df["cid"].astype(int)
+    df["date"] = file_dt
+    df_to_write = df[["date","cid","value","volume"]]
+    db.df_write(df_to_write, "stocks", if_exists="append", index=False)
+    db.commit()
+    print(f"✓ {len(df_to_write)} enregistrements insérés dans stocks.")
 
 @timer_decorator
 def store_files(start: str, end: str, website: str, db: TSDB):
     start_dt = pd.to_datetime(start)
     end_dt   = pd.to_datetime(end)
-
-    files = get_all_files(website)
-    store_companies(files, db)
-
-    map_df        = db.df_query("SELECT id, euronext AS symbol FROM companies")
-    symbol_to_cid = dict(zip(map_df["symbol"], map_df["id"]))
-
-    all_days = []
-    for file in files:
-        if website == "euronext":
+    files = get_all_files(website, start_dt, end_dt)
+    if website == "euronext":
+        store_companies(files, db)
+        map_df = db.df_query("SELECT id, euronext AS symbol FROM companies")
+        symbol_to_cid = dict(zip(map_df["symbol"], map_df["id"]))
+        all_days = []
+        for file in files:
             if file.endswith(".csv"):
                 df_day = compute_csv(file, start_dt, end_dt)
             else:
                 df_day = compute_xlsx(file, start_dt, end_dt)
-        else:
-            # TODO: gérer boursorama via pickle
-            continue
+            df_day["cid"] = df_day["symbol"].map(symbol_to_cid)
+            df_day = df_day.dropna(subset=["cid"])
+            df_day["cid"] = df_day["cid"].astype(int)
+            all_days.append(df_day)
+        full_df = pd.concat(all_days, ignore_index=True).drop(columns=["symbol"])
+        db.df_write(full_df, "daystocks", if_exists="append", index=False)
+        print(f"Insertion en base : {len(full_df):,} lignes")
 
-        df_day["cid"] = df_day["symbol"].map(symbol_to_cid)
-        df_day = df_day.dropna(subset=["cid"])
-        df_day["cid"] = df_day["cid"].astype(int)
-
-        all_days.append(df_day)
-
-    full_df = pd.concat(all_days, ignore_index=True).drop(columns=["symbol"])
-    print(f"Insertion en base : {len(full_df):,} lignes")
-    db.df_write(full_df, "daystocks", if_exists="append", index=False)
-    db.commit()
+    else:
+        db.execute("DELETE FROM stocks WHERE date >= %s AND date <= %s;",(start_dt, end_dt), commit=True)
+        for file in files:
+            df_day = compute_gz2(file)
+            store_stocks(df_day, file, start_dt, end_dt, db)
+    # db.commit()
 
 
 # ----------------------------------------
@@ -186,7 +220,7 @@ def store_files(start: str, end: str, website: str, db: TSDB):
 if __name__ == "__main__":
     print("Go Extract Transform and Load")
     pd.set_option("display.max_columns", None)
-
     db = TSDB("bourse", "ricou", "db", "monmdp")
-    store_files("2020-01-01", "2020-02-01", "euronext", db)
+    store_files("2020-05-04", "2020-05-08", "euronext", db)
+    store_files("2020-05-04", "2020-06-02", "bourso", db)
     print("Done ETL.")
