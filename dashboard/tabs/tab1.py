@@ -42,13 +42,6 @@ for _, row in _comp_df.iterrows():
         })
 
 
-# -------------------------------------------------------------------
-# Options pour l'intervalle : daystocks vs stocks (10 minutes)
-# -------------------------------------------------------------------
-_interval_options = [
-    {"label": "Journalier", "value": "day"},
-    {"label": "10 minutes", "value": "10min"},
-]
 
 # -------------------------------------------------------------------
 # Layout du premier onglet
@@ -84,16 +77,6 @@ tab1_layout = html.Div([
                 )
             ], style={"marginRight": "2rem"}),
 
-            # Choix de l'intervalle
-            html.Div([
-                html.Label("Intervalle"),
-                dcc.RadioItems(
-                    id="interval-type",
-                    options=_interval_options,
-                    value="day",
-                    inline=True
-                )
-            ], style={"marginRight": "2rem"}),
 
             # Ligne ou Chandeliers
             html.Div([
@@ -180,10 +163,9 @@ def update_dropdown_from_legend(restyle_data, selected_symbols):
         Input("date-picker-range", "end_date"),
         Input("chart-type", "value"),
         Input("yaxis-type", "value"),
-        Input("interval-type", "value"),
     ],
 )
-def update_price_chart(symbols, start_date, end_date, chart_type, yaxis_type, interval_type):
+def update_price_chart(symbols, start_date, end_date, chart_type, yaxis_type):
     # symbols is now a list!
     if not symbols or not start_date or not end_date:
         return go.Figure()
@@ -191,33 +173,16 @@ def update_price_chart(symbols, start_date, end_date, chart_type, yaxis_type, in
     fig = go.Figure()
 
     for symbol in symbols:
-        # Charger les données selon l'intervalle choisi
-        if interval_type == "day":
-            q = f"""
-            SELECT ds.date, ds.open, ds.high, ds.low, ds.close
-            FROM daystocks ds
-            JOIN companies c ON ds.cid = c.id
-            WHERE c.symbol = '{symbol}'
-              AND ds.date >= '{start_date}'
-              AND ds.date <= '{end_date}'
-            ORDER BY ds.date;
-            """
-            df = db.df_query(q, parse_dates=["date"])
-        else:
-            q = f"""
-            SELECT s.date, s.value AS close
-            FROM stocks s
-            JOIN companies c ON s.cid = c.id
-            WHERE c.symbol = '{symbol}'
-              AND s.date >= '{start_date}'
-              AND s.date <= '{end_date}'
-            ORDER BY s.date;
-            """
-            df = db.df_query(q, parse_dates=["date"])
-            if not df.empty:
-                df["open"] = df["close"]
-                df["high"] = df["close"]
-                df["low"] = df["close"]
+        q = f"""
+        SELECT ds.date, ds.open, ds.high, ds.low, ds.close
+        FROM daystocks ds
+        JOIN companies c ON ds.cid = c.id
+        WHERE c.symbol = '{symbol}'
+            AND ds.date >= '{start_date}'
+            AND ds.date <= '{end_date}'
+        ORDER BY ds.date;
+        """
+        df = db.df_query(q, parse_dates=["date"])
 
         # Skip if no data
         if df.empty:
