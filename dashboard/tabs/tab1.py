@@ -140,6 +140,7 @@ tab1_layout = html.Div([
 # Callback pour mettre à jour le graphique (daystocks ou stocks)
 # -------------------------------------------------------------------
 
+
 @app.callback(
     Output("symbol-dropdown", "value"),
     Input("price-chart", "restyleData"),
@@ -170,7 +171,6 @@ def update_dropdown_from_legend(restyle_data, selected_symbols):
     # Enlève les symbols désactivés
     new_selection = [s for s in selected_symbols if s not in symbols_to_remove]
     return new_selection
-
 
 @app.callback(
     Output("price-chart", "figure"),
