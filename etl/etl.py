@@ -273,7 +273,7 @@ if __name__ == "__main__":
     pd.set_option("display.max_columns", None)
     db = TSDB("bourse", "ricou", "db", "monmdp")
     start_date = "2020-06-15"
-    end_date = "2021-06-15"
+    end_date = "2020-06-20"
     store_files(start_date, end_date, "euronext", db)
     store_files(start_date, end_date, "bourso", db)
     fill_missing_daystocks(start_date, end_date, db)
