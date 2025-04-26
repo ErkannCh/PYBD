@@ -119,6 +119,57 @@ def timer_decorator(func):
         return res
     return wrapper
 
+def fill_missing_daystocks(start, end, db: TSDB):
+    start_dt = pd.to_datetime(start)
+    end_dt   = pd.to_datetime(end)
+    # Charger déjà inséré daystocks
+    df_existing = db.df_query(
+        "SELECT date, cid FROM daystocks WHERE date >= '%s' AND date <= '%s'" % (start_dt, end_dt)
+    )
+    df_existing['date'] = pd.to_datetime(df_existing['date']).dt.floor('D')
+
+    # Obtenir tous les cid connus
+    comps = db.df_query("SELECT id AS cid FROM companies")
+    cids = comps['cid'].unique()
+
+    # Générer toutes combinaisons de date x cid
+    full_dates = pd.date_range(start_dt.floor('D'),
+		end_dt.floor('D'),
+		freq='B',
+		tz='UTC')
+    full = pd.MultiIndex.from_product([full_dates, cids], names=['date','cid']).to_frame(index=False)
+
+    # Identifier les manquants
+    merged = full.merge(df_existing.drop_duplicates(), on=['date','cid'], how='left', indicator=True)
+    missing = merged[merged['_merge']=='left_only'][['date','cid']]
+    if missing.empty:
+        print("Aucun jour manquant à remplir.")
+        return
+
+    # Aggreger depuis stocks (10min) pour combler
+    df_stocks = db.df_query(
+        "SELECT date, cid, value, volume FROM stocks WHERE date >= '%s' AND date <= '%s'" % (start_dt, end_dt)
+    )
+    df_stocks['date'] = pd.to_datetime(df_stocks['date']).dt.floor('D')
+    agg = df_stocks.groupby(['date','cid']).agg(
+        open=('value','first'),
+        close=('value','last'),
+        high=('value','max'),
+        low=('value','min'),
+        volume=('volume','sum'),
+        mean=('value','mean'),
+        std=('value','std')
+    ).reset_index()
+
+    to_insert = missing.merge(agg, on=['date','cid'], how='inner')
+    if to_insert.empty:
+        print("Pas de données Boursorama pour les jours manquants.")
+        return
+
+    db.df_write(to_insert, 'daystocks', if_exists='append', index=False)
+    db.commit()
+    print(f"✓ {len(to_insert)} jours manquants remplis depuis Boursorama.")
+
 @timer_decorator
 def store_companies(files: list[str], db: TSDB):
     market_map = {
@@ -166,9 +217,9 @@ def store_stocks(df, file, start_dt, end_dt, db: TSDB) -> pd.DataFrame:
         r"(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2}(?:\.\d+)?))",
         os.path.basename(file)
     )
-
     file_dt = pd.to_datetime(m.group(1), errors="coerce")
     df = df.copy()
+    df["last"] = df["last"].str.replace(r"\(c\)\s*$", "", regex=True).str.strip()
     df["value"]  = pd.to_numeric(df["last"],   errors="coerce")
     df["volume"] = pd.to_numeric(df["volume"], errors="coerce")
     df = df.dropna(subset=["symbol","value","volume"])
@@ -182,7 +233,6 @@ def store_stocks(df, file, start_dt, end_dt, db: TSDB) -> pd.DataFrame:
     df_to_write = df[["date","cid","value","volume"]]
     db.df_write(df_to_write, "stocks", if_exists="append", index=False)
     db.commit()
-    print(f"✓ {len(df_to_write)} enregistrements insérés dans stocks.")
 
 @timer_decorator
 def store_files(start: str, end: str, website: str, db: TSDB):
@@ -222,8 +272,9 @@ if __name__ == "__main__":
     print("Go Extract Transform and Load")
     pd.set_option("display.max_columns", None)
     db = TSDB("bourse", "ricou", "db", "monmdp")
-    print(db)
-    store_files("2020-05-01", "2024-12-31", "euronext", db)
-    #store_files("2020-05-01", "2024-12-31", "euronext", db)
-    #store_files("2019-01-01", "2024-12-09", "bourso", db)
+    start_date = "2020-06-15"
+    end_date = "2021-06-15"
+    store_files(start_date, end_date, "euronext", db)
+    store_files(start_date, end_date, "bourso", db)
+    fill_missing_daystocks(start_date, end_date, db)
     print("Done ETL.")
