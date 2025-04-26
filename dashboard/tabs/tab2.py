@@ -74,16 +74,29 @@ tab2_layout = html.Div([
 # Helper function: Build HTML table
 # ----------------------------------------------
 
-def generate_html_table(df: pd.DataFrame, max_rows=20):
-    """Create an HTML table from a DataFrame"""
-    return html.Table([
-        html.Thead(html.Tr([html.Th(col) for col in df.columns])),
-        html.Tbody([
-            html.Tr([
-                html.Td(df.iloc[i][col]) for col in df.columns
-            ]) for i in range(min(len(df), max_rows))
-        ])
-    ], style={"width": "100%", "borderCollapse": "collapse", "border": "1px solid black"})
+def generate_html_table(df: pd.DataFrame):
+    """Create a full HTML table from a DataFrame, without row limitation and with correct values"""
+    return html.Div([
+        html.Table([
+            html.Thead(html.Tr([html.Th(col) for col in df.columns])),
+            html.Tbody([
+                html.Tr([
+                    html.Td(df.iloc[i][col]) for col in df.columns
+                ]) for i in range(len(df))
+            ])
+        ], style={
+            "width": "100%",
+            "borderCollapse": "collapse",
+            "border": "1px solid black"
+        })
+    ], style={
+        "maxHeight": "500px",
+        "overflowY": "scroll",
+        "display": "block",
+        "border": "1px solid grey",
+        "padding": "5px"
+    })
+
 
 
 

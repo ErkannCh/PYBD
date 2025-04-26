@@ -154,6 +154,7 @@ def store_companies(files: list[str], db: TSDB):
         "sector3"   : None,
     })
     db.execute("TRUNCATE TABLE companies CASCADE;", commit=True)
+    db.execute("TRUNCATE TABLE daystocks, stocks RESTART IDENTITY CASCADE;", commit=True)
     db.execute("ALTER SEQUENCE company_id_seq RESTART WITH 1;", commit=True)
     db.df_write(df_comp, "companies", if_exists="append", index=False)
     db.commit()
