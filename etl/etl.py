@@ -1,7 +1,7 @@
 import os
 import glob
-import time
 import re
+import time
 import csv
 
 import pandas as pd
@@ -11,6 +11,34 @@ from timescaledb_model import initial_markets_data
 
 TSDB = tsdb.TimescaleStockMarketModel
 HOME = "/home/bourse/data/"
+CLEAN_LAST_REGEX = re.compile(r"\(c\)\s*$")
+BASE_SYMBOL_REGEX = re.compile(r"^1rP")
+DATETIME_REGEX = re.compile(r"(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2}(?:\.\d+)?))")
+
+
+def timer_decorator(func):
+    def wrapper(*args, **kwargs):
+        t0 = time.time()
+        res = func(*args, **kwargs)
+        print(f"{func.__name__} → {time.time()-t0:.2f}s")
+        return res
+    return wrapper
+
+@timer_decorator
+def get_all_files(website: str, start, end) -> list[str]:
+    if website == "euronext":
+        pattern = os.path.join(HOME, website, "*")
+    else:
+        pattern = os.path.join(HOME, website, "20*", "*")
+
+    files = glob.glob(pattern, recursive=True)
+    df = pd.DataFrame({"filepath": files})
+    df["filename"] = df["filepath"].str.split(os.sep).str[-1]
+    df["date_str"] = df["filename"].str.extract(r"(\d{4}-\d{2}-\d{2})", expand=False)
+    df["file_date"] = pd.to_datetime(df["date_str"], errors="coerce")
+    mask = df["file_date"].between(start, end)
+    return sorted(df.loc[mask, "filepath"].tolist())
+
 
 def detect_header_csv(path: str) -> pd.DataFrame:
     with open(path, encoding="utf-8", errors="ignore") as f:
@@ -95,46 +123,20 @@ def compute_xlsx(path: str, start_dt, end_dt) -> pd.DataFrame:
 def compute_gz2(path: str) -> pd.DataFrame:
     return pd.read_pickle(path)
 
-# ----------------------------------------
-# Décorateur de timing
-# ----------------------------------------
-def timer_decorator(func):
-    def wrapper(*args, **kwargs):
-        t0 = time.time()
-        res = func(*args, **kwargs)
-        print(f"{func.__name__} → {time.time()-t0:.2f}s")
-        return res
-    return wrapper
-
-@timer_decorator
-def get_all_files(website: str, start, end) -> list[str]:
-    if website == "euronext":
-        pattern = os.path.join(HOME, website, "*")
-    else:
-        pattern = os.path.join(HOME, website, "20*", "*")
-
-    files = glob.glob(pattern, recursive=True)
-    df = pd.DataFrame({"filepath": files})
-    df["filename"] = df["filepath"].str.split(os.sep).str[-1]
-    df["date_str"] = df["filename"].str.extract(r"(\d{4}-\d{2}-\d{2})", expand=False)
-    df["file_date"] = pd.to_datetime(df["date_str"], errors="coerce")
-    mask = df["file_date"].between(start, end)
-    result = df.loc[mask, "filepath"]
-    return sorted(result.tolist())
-
-
 @timer_decorator
 def fill_missing_daystocks(start, end, db: TSDB):
     start_dt = pd.to_datetime(start)
     end_dt   = pd.to_datetime(end)
-    df_existing = db.df_query("SELECT date, cid FROM daystocks WHERE date >= '%s' AND date <= '%s'" % (start_dt, end_dt))
+    df_existing = db.df_query(
+        "SELECT date, cid FROM daystocks WHERE date >= '%s' AND date <= '%s'" % (start_dt, end_dt)
+    )
     df_existing['date'] = pd.to_datetime(df_existing['date']).dt.floor('D')
     comps = db.df_query("SELECT id AS cid FROM companies")
     cids = comps['cid'].unique()
     full_dates = pd.date_range(start_dt.floor('D'),
-        end_dt.floor('D'),
-        freq='B',
-        tz='UTC')
+		end_dt.floor('D'),
+		freq='B',
+		tz='UTC')
     full = pd.MultiIndex.from_product([full_dates, cids], names=['date','cid']).to_frame(index=False)
     merged = full.merge(df_existing.drop_duplicates(), on=['date','cid'], how='left', indicator=True)
     missing = merged[merged['_merge']=='left_only'][['date','cid']]
@@ -158,14 +160,23 @@ def fill_missing_daystocks(start, end, db: TSDB):
     if to_insert.empty:
         print("Pas de données Boursorama pour les jours manquants.")
         return
-    db.df_write(to_insert, 'daystocks')
+    db.df_write(to_insert, 'daystocks', if_exists='append', index=False)
+    db.commit()
+    #print(f"✓ {len(to_insert)} jours manquants remplis depuis Boursorama.")
 
-@timer_decorator           
+@timer_decorator
 def store_files_done(files: list[str], db: TSDB) -> None:
-    for path in files:
-        db.execute("INSERT INTO file_done (name) VALUES (%s) ON CONFLICT (name) DO NOTHING;", (path,))
+    if not files:
+        return
+    placeholders = ",".join("(%s)" for _ in files)
+    sql = (
+        f"INSERT INTO file_done (name) VALUES {placeholders} "
+        "ON CONFLICT (name) DO NOTHING;"
+    )
+    db.execute(sql, tuple(files), commit=True)
+    #print(f"✓ {len(files)} fichier insérés dans file_done.")
 
-@timer_decorator           
+@timer_decorator
 def store_markets(db: TSDB):
     """
     Truncate and reload the 'markets' table using initial_markets_data
@@ -173,7 +184,11 @@ def store_markets(db: TSDB):
     """
     cols = ["id", "name", "alias", "boursorama", "sws", "euronext"]
     df_markets = pd.DataFrame(initial_markets_data, columns=cols)
-    db.df_write(df_markets, "markets")
+
+    db.execute("TRUNCATE TABLE markets RESTART IDENTITY CASCADE;", commit=True)
+    db.df_write(df_markets, "markets", if_exists="append", index=False)
+    db.commit()
+    #print(f"✓ {len(df_markets)} markets inserted into 'markets'.")
 
 @timer_decorator
 def store_companies(files: list[str], db: TSDB):
@@ -183,6 +198,7 @@ def store_companies(files: list[str], db: TSDB):
         "Euronext Access Paris":     6,
         "Euronext Brussels, Paris":  6,
     }
+
     comps = []
     for file in files:
         if file.endswith(".csv"):
@@ -208,72 +224,101 @@ def store_companies(files: list[str], db: TSDB):
         "sector2"   : None,
         "sector3"   : None,
     })
-    db.df_write(df_comp, "companies")
+    db.execute("TRUNCATE TABLE companies CASCADE;", commit=True)
+    db.execute("TRUNCATE TABLE daystocks, stocks RESTART IDENTITY CASCADE;", commit=True)
+    db.execute("ALTER SEQUENCE company_id_seq RESTART WITH 1;", commit=True)
+    db.df_write(df_comp, "companies", if_exists="append", index=False)
+    db.commit()
+    #print(f"✓ {len(df_comp)} entreprises insérées dans companies.")
+
+
+
+def process_stocks(df, file_path, symbol_to_cid):
+    filename = os.path.basename(file_path)
+    m = DATETIME_REGEX.search(filename)
+    if not m:
+        raise ValueError(f"Invalid filename: {filename}")
+    file_dt = pd.to_datetime(m.group(1), errors="coerce")
+    if pd.isna(file_dt):
+        raise ValueError(f"Invalid datetime: {filename}")
+
+    df = df[['symbol', 'last', 'volume']].dropna()
+
+    df['value'] = pd.to_numeric(
+        df['last'].str.replace(CLEAN_LAST_REGEX, '', regex=True).str.strip(), 
+        errors='coerce'
+    )
+    df['volume'] = pd.to_numeric(df['volume'], errors='coerce')
+
+    df = df.dropna(subset=['value', 'volume'])
+
+    base_sym = df['symbol'].str.replace(BASE_SYMBOL_REGEX, '', regex=True)
+    cids = base_sym.map(symbol_to_cid)
+    valid = cids.notna()
+
+    df = df.loc[valid]
+    df['cid'] = cids.loc[valid].astype(int)
+    df['date'] = file_dt
+
+    return df[['date', 'cid', 'value', 'volume']]
+
+
+
 
 @timer_decorator
-def store_stocks(files, db):
-    all_stocks = []
-    for file in files:
-        df_day = compute_gz2(file)
-        m = re.search(r"(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2}(?:\.\d+)?))",os.path.basename(file))
-        file_dt = pd.to_datetime(m.group(1), errors="coerce")
-        df = df_day.copy()
-        df["last"] = df["last"].str.replace(r"\(c\)\s*$", "", regex=True).str.strip()
-        df["value"]  = pd.to_numeric(df["last"],   errors="coerce")
-        df["volume"] = pd.to_numeric(df["volume"], errors="coerce")
-        df = df.dropna(subset=["symbol","value","volume"])
-        df["base_symbol"] = df["symbol"].str.replace(r"^1rP", "", regex=True)
-        comp = db.df_query("SELECT id AS cid, symbol FROM companies")
-        symbol2cid = dict(zip(comp["symbol"], comp["cid"]))
-        df["cid"] = df["base_symbol"].map(symbol2cid)
-        df = df.dropna(subset=["cid"])
-        df["cid"] = df["cid"].astype(int)
-        df["date"] = file_dt
-        all_stocks.append(df[["date","cid","value","volume"]])
-    if all_stocks:
-        full_stocks_df = pd.concat(all_stocks, ignore_index=True)
-        db.df_write(full_stocks_df, "stocks")
-
-@timer_decorator
-def store_daystocks(files, db, start_dt, end_dt):
-    map_df = db.df_query("SELECT id, euronext FROM companies")
-    symbol_to_cid = dict(zip(map_df["euronext"], map_df["id"]))
-    all_days = []
-    for file in files:
-        if file.endswith(".csv"):
-            df_day = compute_csv(file, start_dt, end_dt)
-        else:
-            df_day = compute_xlsx(file, start_dt, end_dt)
-        df_day["cid"] = df_day["symbol"].map(symbol_to_cid)
-        df_day = df_day.dropna(subset=["cid"])
-        df_day["cid"] = df_day["cid"].astype(int)
-        all_days.append(df_day)
-    full_df = pd.concat(all_days, ignore_index=True).drop(columns=["symbol"])
-    db.df_write(full_df, "daystocks")
-
-
 def store_files(start: str, end: str, website: str, db: TSDB):
-    start_dt = pd.to_datetime(start)
-    end_dt   = pd.to_datetime(end)
+    start_dt, end_dt = pd.to_datetime(start), pd.to_datetime(end)
     files = get_all_files(website, start_dt, end_dt)
     store_files_done(files, db)
-    if website == "euronext":
+
+    if not files:
+        return
+
+    if website == 'euronext':
         store_companies(files, db)
-        store_daystocks(files, db, start_dt, end_dt)
+        map_df = db.df_query("SELECT id AS cid, euronext AS symbol FROM companies")
+        symbol_to_cid = pd.Series(map_df['cid'].values, index=map_df['symbol']).to_dict()
+
+        all_days = []
+        for f in files:
+            df_day = (compute_csv if f.endswith('.csv') else compute_xlsx)(f, start_dt, end_dt)
+            df_day = df_day[df_day['symbol'].isin(symbol_to_cid)]
+            df_day['cid'] = df_day['symbol'].map(symbol_to_cid).astype('int32')
+            all_days.append(df_day.drop(columns=['symbol']))
+
+        if all_days:
+            full = pd.concat(all_days, ignore_index=True)
+            db.df_write(full, 'daystocks', if_exists='append', index=False)
+            db.commit()
+
     else:
-        store_stocks(files, db)
+        db.execute(
+            "DELETE FROM stocks WHERE date >= %s AND date <= %s;",
+            (start_dt, end_dt),
+            commit=True
+        )
+        map_df = db.df_query("SELECT id AS cid, boursorama AS symbol FROM companies")
+        symbol_to_cid = pd.Series(map_df['cid'].values, index=map_df['symbol']).to_dict()
+
+        batch = []
+        for f in files:
+            df = compute_gz2(f)
+            batch.append(process_stocks(df, f, symbol_to_cid))
+
+        if batch:
+            full = pd.concat(batch, ignore_index=True)
+            db.df_write(full, 'stocks', if_exists='append', index=False)
+            db.commit()
 
 
-# ----------------------------------------
-# Main
-# ----------------------------------------
 if __name__ == "__main__":
     print("Go Extract Transform and Load")
     pd.set_option("display.max_columns", None)
-    db = TSDB("bourse", "ricou", "db", "monmdp", remove_all=True)
-    start_date = "2020-06-19"
-    end_date = "2020-06-20"
-    #store_markets(db)
+    db = TSDB("bourse", "ricou", "db", "monmdp")
+    start_date = "2020-06-15"
+    end_date = "2020-08-20"
+    store_markets(db)
+    db.execute("TRUNCATE TABLE file_done;", commit=True)
     store_files(start_date, end_date, "euronext", db)
     store_files(start_date, end_date, "bourso", db)
     fill_missing_daystocks(start_date, end_date, db)

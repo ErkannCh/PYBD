@@ -9,6 +9,7 @@ import plotly.colors as pc
 
 from app import app, db
 
+
 _comp_df = db.df_query(
     """
     SELECT DISTINCT c.id, c.symbol, c.name
@@ -29,17 +30,21 @@ _symbol_options = []
 for _, row in _comp_df.iterrows():
     symbol = str(row.symbol).strip()
     name = str(row.name).strip()
+
     if symbol and name and symbol.lower() != "none" and name.lower() != "none":
         _symbol_options.append({
             "label": f"{symbol} – {name}",
             "value": symbol
         })
 
+
+
 tab1_layout = html.Div([
     html.Br(),
     html.Div(
         className="d-flex flex-wrap",
         children=[
+
             html.Div([
                 html.Label("Action"),
                 dcc.Dropdown(
@@ -63,7 +68,6 @@ tab1_layout = html.Div([
                 )
             ], style={"marginRight": "2rem"}),
 
-
             html.Div([
                 html.Label("Type de graphique"),
                 dcc.RadioItems(
@@ -78,7 +82,19 @@ tab1_layout = html.Div([
                 )
             ], style={"marginRight": "2rem"}),
 
-            
+            html.Div([
+                html.Label("Indicateurs Techniques"),
+                dcc.Checklist(
+                    id="technical-indicators",
+                    options=[
+                        {"label": "SMA (20)", "value": "sma20"},
+                        {"label": "EMA (20)", "value": "ema20"},
+                        {"label": "RSI (14)", "value": "rsi14"},
+                    ],
+                    value=[],
+                    inline=True,
+                )
+            ], style={"marginRight": "2rem"}),
 
             html.Div([
                 html.Label("Échelle Y"),
@@ -100,6 +116,7 @@ tab1_layout = html.Div([
     dcc.Graph(id="price-chart", config={"displayModeBar": True})
 ])
 
+
 @app.callback(
     Output("symbol-dropdown", "value"),
     Input("price-chart", "restyleData"),
@@ -109,6 +126,7 @@ tab1_layout = html.Div([
 def update_dropdown_from_legend(restyle_data, selected_symbols):
     if restyle_data is None:
         return selected_symbols
+
     changed_visibility = restyle_data[0].get('visible', [])
     changed_indices = restyle_data[1]
 
@@ -133,9 +151,11 @@ def update_dropdown_from_legend(restyle_data, selected_symbols):
         Input("date-picker-range", "end_date"),
         Input("chart-type", "value"),
         Input("yaxis-type", "value"),
+        Input("technical-indicators", "value"),
     ],
 )
-def update_price_chart(symbols, start_date, end_date, chart_type, yaxis_type):
+def update_price_chart(symbols, start_date, end_date, chart_type, yaxis_type, technical_indicators):
+
     if not symbols or not start_date or not end_date:
         return go.Figure()
 
@@ -175,7 +195,7 @@ def update_price_chart(symbols, start_date, end_date, chart_type, yaxis_type):
             ))
 
         elif chart_type == "bollinger":
-            window = 20
+            window = 20 
             if len(df) >= window:
                 df['rolling_mean'] = df['close'].rolling(window=window).mean()
                 df['rolling_std'] = df['close'].rolling(window=window).std()
@@ -226,7 +246,42 @@ def update_price_chart(symbols, start_date, end_date, chart_type, yaxis_type):
                     legendgroup=legend_group_name,
                     showlegend=False
                 ))
+        if "sma20" in technical_indicators and len(df) >= 20:
+            df["SMA20"] = df["close"].rolling(window=20).mean()
+            fig.add_trace(go.Scatter(
+                x=df["date"],
+                y=df["SMA20"],
+                mode="lines",
+                line=dict(dash="dash", color="blue"),
+                name=f"{symbol} - SMA20"
+            ))
 
+        if "ema20" in technical_indicators and len(df) >= 20:
+            df["EMA20"] = df["close"].ewm(span=20, adjust=False).mean()
+            fig.add_trace(go.Scatter(
+                x=df["date"],
+                y=df["EMA20"],
+                mode="lines",
+                line=dict(dash="dot", color="green"),
+                name=f"{symbol} - EMA20"
+            ))
+
+        if "rsi14" in technical_indicators and len(df) >= 14:
+            delta = df["close"].diff()
+            gain = delta.where(delta > 0, 0)
+            loss = -delta.where(delta < 0, 0)
+            avg_gain = gain.rolling(window=14).mean()
+            avg_loss = loss.rolling(window=14).mean()
+            rs = avg_gain / avg_loss
+            df["RSI"] = 100 - (100 / (1 + rs))
+            # RSI is best on a secondary y-axis (but for now just add below price)
+            fig.add_trace(go.Scatter(
+                x=df["date"],
+                y=df["RSI"],
+                mode="lines",
+                line=dict(color="red"),
+                name=f"{symbol} - RSI14"
+            ))
 
     fig.update_layout(
         title={
@@ -243,7 +298,9 @@ def update_price_chart(symbols, start_date, end_date, chart_type, yaxis_type):
         template="plotly_white",
         yaxis_type=yaxis_type,
         legend_title="Actions",
-        showlegend=True,
+        showlegend=True
     )
+
+
 
     return fig

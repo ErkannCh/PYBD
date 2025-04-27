@@ -79,7 +79,6 @@ def generate_html_table(df: pd.DataFrame):
 
     if "Écart type" in df_display.columns:
         df_display["Écart type"] = df_display["Écart type"].round(2)
-
     if "Date" in df_display.columns:
         df_display["Date"] = pd.to_datetime(df_display["Date"]).dt.date
 
@@ -114,6 +113,7 @@ def generate_html_table(df: pd.DataFrame):
 def update_table(selected_symbol, start_date, end_date):
     if not selected_symbol:
         return html.P("Veuillez sélectionner une action.")
+
     query = """
         SELECT c.symbol, s.date, s.open, s.high, s.low, s.close, s.volume
         FROM daystocks s
@@ -121,12 +121,15 @@ def update_table(selected_symbol, start_date, end_date):
         WHERE c.symbol = %s
     """
     params = [selected_symbol]
+
     if start_date and end_date:
         query += " AND s.date BETWEEN %s AND %s"
         params.extend([start_date, end_date])
 
-    query += " ORDER BY s.date ASC" 
+    query += " ORDER BY s.date ASC"
+
     df = db.df_query(query, params=tuple(params))
+
     if df.empty:
         return html.P("Aucune donnée disponible pour cette sélection.")
     df['écart_type'] = df['close'].rolling(window=7, center=True, min_periods=1).std()
