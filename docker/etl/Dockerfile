@@ -1,4 +1,4 @@
-FROM ubuntu:24.04
+FROM reg.undercloud.cri.epita.fr/docker/ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 

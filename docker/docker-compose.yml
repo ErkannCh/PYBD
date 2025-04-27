@@ -4,7 +4,7 @@ networks:
 
 services:
   db:
-    image: timescale/timescaledb:latest-pg16
+    image: reg.undercloud.cri.epita.fr/docker/timescale/timescaledb:latest-pg16
     container_name: db
     command: postgres -c shared_preload_libraries=timescaledb
       #command:["sh", "-c", "chmod -R 777 /var/lib/postgresql/data/timescaledb &&  postgres -c shared_preload_libraries=timescaledb"]
@@ -18,7 +18,7 @@ services:
       - POSTGRES_USER=ricou
       - POSTGRES_PASSWORD=monmdp
     volumes:
-      - /home/ricou/bourse/timescaledb:/var/lib/postgresql/data/timescaledb
+      - /home/lucas.collemare/bourse/timescaledb:/var/lib/postgresql/data/timescaledb
     healthcheck:
         test: ["CMD-SHELL", "pg_isready -U ricou bourse"]
         interval: 10s
@@ -33,7 +33,7 @@ services:
     networks:
       - boursenet
     volumes:
-      - ../data:/home/bourse/data
+      - /home/lucas.collemare/bourse/data:/home/bourse/data
 
   dashboard:
     image: my_dashboard
