@@ -238,28 +238,29 @@ def process_stocks(df, file_path, symbol_to_cid):
     m = DATETIME_REGEX.search(filename)
     if not m:
         raise ValueError(f"Invalid filename: {filename}")
+
     file_dt = pd.to_datetime(m.group(1), errors="coerce")
     if pd.isna(file_dt):
         raise ValueError(f"Invalid datetime: {filename}")
 
+    # Traitement en un seul passage
     df = df[['symbol', 'last', 'volume']].dropna()
-
-    df['value'] = pd.to_numeric(
-        df['last'].str.replace(CLEAN_LAST_REGEX, '', regex=True).str.strip(), 
-        errors='coerce'
-    )
+    df['value'] = pd.to_numeric(df['last'].str.replace(CLEAN_LAST_REGEX, '', regex=True).str.strip(), errors='coerce')
     df['volume'] = pd.to_numeric(df['volume'], errors='coerce')
 
-    df = df.dropna(subset=['value', 'volume'])
-
-    base_sym = df['symbol'].str.replace(BASE_SYMBOL_REGEX, '', regex=True)
-    cids = base_sym.map(symbol_to_cid)
-    valid = cids.notna()
-
+    valid = df['value'].notna() & df['volume'].notna()
     df = df.loc[valid]
-    df['cid'] = cids.loc[valid].astype(int)
-    df['date'] = file_dt
 
+    # Optimiser le mapping sans passer par .map() (qui est lent sur des grands DataFrames)
+    symbols = df['symbol'].str.replace(BASE_SYMBOL_REGEX, '', regex=True)
+    cids = symbols.map(symbol_to_cid)
+
+    valid_cids = cids.notna()
+    df = df.loc[valid_cids]
+    df = df.assign(
+        cid=cids.loc[valid_cids].astype(int),
+        date=file_dt
+    )
     return df[['date', 'cid', 'value', 'volume']]
 
 
@@ -272,7 +273,6 @@ def store_files(start: str, end: str, website: str, db: TSDB):
     store_files_done(files, db)
 
     if website == 'euronext':
-        # Euronext path
         store_companies(files, db)
         map_df = db.df_query("SELECT id AS cid, euronext AS symbol FROM companies")
         symbol_to_cid = dict(zip(map_df['symbol'], map_df['cid']))
@@ -288,7 +288,6 @@ def store_files(start: str, end: str, website: str, db: TSDB):
             db.commit()
 
     else:
-        # Boursorama (gz2) path
         db.execute(
             "DELETE FROM stocks WHERE date >= %s AND date <= %s;",
             (start_dt, end_dt), commit=True
@@ -308,6 +307,8 @@ def store_files(start: str, end: str, website: str, db: TSDB):
             db.commit()
 
 
+
+
 if __name__ == "__main__":
     print("Go Extract Transform and Load")
     pd.set_option("display.max_columns", None)
@@ -320,3 +321,5 @@ if __name__ == "__main__":
     store_files(start_date, end_date, "bourso", db)
     fill_missing_daystocks(start_date, end_date, db)
     print("Done ETL.")
+
+
