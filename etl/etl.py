@@ -271,42 +271,39 @@ def store_files(start: str, end: str, website: str, db: TSDB):
     files = get_all_files(website, start_dt, end_dt)
     store_files_done(files, db)
 
-    if not files:
-        return
-
     if website == 'euronext':
+        # Euronext path
         store_companies(files, db)
         map_df = db.df_query("SELECT id AS cid, euronext AS symbol FROM companies")
-        symbol_to_cid = pd.Series(map_df['cid'].values, index=map_df['symbol']).to_dict()
-
+        symbol_to_cid = dict(zip(map_df['symbol'], map_df['cid']))
         all_days = []
         for f in files:
-            df_day = (compute_csv if f.endswith('.csv') else compute_xlsx)(f, start_dt, end_dt)
-            df_day = df_day[df_day['symbol'].isin(symbol_to_cid)]
-            df_day['cid'] = df_day['symbol'].map(symbol_to_cid).astype('int32')
+            df_day = compute_csv(f, start_dt, end_dt) if f.endswith('.csv') else compute_xlsx(f, start_dt, end_dt)
+            df_day = df_day.loc[df_day['symbol'].isin(symbol_to_cid)]
+            df_day['cid'] = df_day['symbol'].map(symbol_to_cid).astype(int)
             all_days.append(df_day.drop(columns=['symbol']))
-
         if all_days:
             full = pd.concat(all_days, ignore_index=True)
             db.df_write(full, 'daystocks', if_exists='append', index=False)
             db.commit()
 
     else:
+        # Boursorama (gz2) path
         db.execute(
             "DELETE FROM stocks WHERE date >= %s AND date <= %s;",
-            (start_dt, end_dt),
-            commit=True
+            (start_dt, end_dt), commit=True
         )
-        map_df = db.df_query("SELECT id AS cid, boursorama AS symbol FROM companies")
-        symbol_to_cid = pd.Series(map_df['cid'].values, index=map_df['symbol']).to_dict()
-
-        batch = []
+        comp = db.df_query("SELECT id AS cid, symbol FROM companies")
+        symbol_to_cid = dict(zip(comp['symbol'], comp['cid']))
+        stocks_list = []
         for f in files:
-            df = compute_gz2(f)
-            batch.append(process_stocks(df, f, symbol_to_cid))
-
-        if batch:
-            full = pd.concat(batch, ignore_index=True)
+            try:
+                df_raw = compute_gz2(f)
+                stocks_list.append(process_stocks(df_raw, f, symbol_to_cid))
+            except ValueError:
+                continue
+        if stocks_list:
+            full = pd.concat(stocks_list, ignore_index=True)
             db.df_write(full, 'stocks', if_exists='append', index=False)
             db.commit()
 
