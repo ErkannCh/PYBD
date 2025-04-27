@@ -307,17 +307,37 @@ def store_files(start: str, end: str, website: str, db: TSDB):
 
 
 
+def cycle(start: str, end: str):
+    start_dt = pd.to_datetime(start)
+    end_dt   = pd.to_datetime(end)
+    chunks   = []
+    current  = start_dt
+    while current < end_dt:
+        next_month = current + pd.DateOffset(months=1)
+        chunk_end  = next_month if next_month <= end_dt else end_dt
+        chunks.append((
+            current.strftime('%Y-%m-%d'),
+            chunk_end.strftime('%Y-%m-%d')
+        ))
+        print(chunks)
+        store_files(current.strftime('%Y-%m-%d'), chunk_end.strftime('%Y-%m-%d'), "euronext", db)
+        store_files(current.strftime('%Y-%m-%d'), chunk_end.strftime('%Y-%m-%d'), "bourso", db)
+        fill_missing_daystocks(current.strftime('%Y-%m-%d'), chunk_end.strftime('%Y-%m-%d'), db)
+        current = next_month
+    return chunks
+
 if __name__ == "__main__":
     print("Go Extract Transform and Load")
     pd.set_option("display.max_columns", None)
     db = TSDB("bourse", "ricou", "db", "monmdp", remove_all=True)
     start_date = "2020-08-15"
-    end_date = "2020-08-20"
-    store_markets(db)
+    end_date = "2020-10-20"
     db.execute("TRUNCATE TABLE file_done;", commit=True)
-    store_files(start_date, end_date, "euronext", db)
-    store_files(start_date, end_date, "bourso", db)
-    fill_missing_daystocks(start_date, end_date, db)
+    cycle(start_date, end_date)
+    store_markets(db)
+    # store_files(start_date, end_date, "euronext", db)
+    # store_files(start_date, end_date, "bourso", db)
+    # fill_missing_daystocks(start_date, end_date, db)
     print("Done ETL.")
 
 
