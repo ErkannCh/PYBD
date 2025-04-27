@@ -134,11 +134,7 @@ def update_dropdown_from_legend(restyle_data, selected_symbols):
         return selected_symbols
 
     symbols_to_remove = []
-    if changed_visibility[0] == 'legendonly':
-        for idx in changed_indices:
-            if isinstance(idx, int) and idx < len(selected_symbols):
-                symbol = selected_symbols[idx]
-                symbols_to_remove.append(symbol)
+    
 
     new_selection = [s for s in selected_symbols if s not in symbols_to_remove]
     return new_selection
