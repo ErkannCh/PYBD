@@ -310,8 +310,8 @@ def store_files(start: str, end: str, website: str, db: TSDB):
 if __name__ == "__main__":
     print("Go Extract Transform and Load")
     pd.set_option("display.max_columns", None)
-    db = TSDB("bourse", "ricou", "db", "monmdp")
-    start_date = "2020-06-15"
+    db = TSDB("bourse", "ricou", "db", "monmdp", remove_all=True)
+    start_date = "2020-08-15"
     end_date = "2020-08-20"
     store_markets(db)
     db.execute("TRUNCATE TABLE file_done;", commit=True)
