@@ -1,6 +1,5 @@
 /* style.css */
 
-/* Général */
 body {
     background-color: #f8f9fa;
     font-family: 'Roboto', sans-serif;
@@ -9,7 +8,6 @@ body {
     padding: 0;
 }
 
-/* Titres principaux */
 h1 {
     text-align: center;
     margin-top: 30px;
@@ -18,13 +16,11 @@ h1 {
     font-size: 2.5rem;
 }
 
-/* Séparateurs */
 hr {
     border: 1px solid #dee2e6;
     margin: 30px 0;
 }
 
-/* Tabs */
 .nav-tabs .nav-link {
     color: #495057;
     background-color: #ffffff;
@@ -44,7 +40,6 @@ hr {
     background-color: #e9ecef;
 }
 
-/* Dropdowns */
 .Select-control {
     background-color: #ffffff;
     border: 1px solid #ced4da;
@@ -57,26 +52,22 @@ hr {
     color: #6c757d;
 }
 
-/* Date Picker */
 .DateRangePickerInput {
     border-radius: 0.25rem;
     border: 1px solid #ced4da;
     padding: 5px;
 }
 
-/* Radio Items */
 .dash-radio-items label {
     margin-right: 15px;
     margin-left: 5px;
     font-weight: 500;
 }
 
-/* Graph */
 #price-chart {
     margin-top: 20px;
 }
 
-/* Table (Tab2) */
 table {
     width: 100%;
     margin-top: 20px;
@@ -100,7 +91,6 @@ table tbody tr:nth-child(odd) {
 }
 
 
-/* Responsive */
 @media (max-width: 768px) {
     .d-flex.flex-wrap > div {
         width: 100%;

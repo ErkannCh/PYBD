@@ -243,7 +243,6 @@ def process_stocks(df, file_path, symbol_to_cid):
     if pd.isna(file_dt):
         raise ValueError(f"Invalid datetime: {filename}")
 
-    # Traitement en un seul passage
     df = df[['symbol', 'last', 'volume']].dropna()
     df['value'] = pd.to_numeric(df['last'].str.replace(CLEAN_LAST_REGEX, '', regex=True).str.strip(), errors='coerce')
     df['volume'] = pd.to_numeric(df['volume'], errors='coerce')
@@ -251,7 +250,6 @@ def process_stocks(df, file_path, symbol_to_cid):
     valid = df['value'].notna() & df['volume'].notna()
     df = df.loc[valid]
 
-    # Optimiser le mapping sans passer par .map() (qui est lent sur des grands DataFrames)
     symbols = df['symbol'].str.replace(BASE_SYMBOL_REGEX, '', regex=True)
     cids = symbols.map(symbol_to_cid)
 

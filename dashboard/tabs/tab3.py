@@ -4,7 +4,7 @@ import plotly.graph_objs as go
 import dash.dependencies as ddep
 import dash_extensions as de
 
-from app import app, db  # Import these instances
+from app import app, db 
 
 tab3_layout = dcc.Tab(label='SQL', children=[
     html.H2("SQL Terminal"),
@@ -38,10 +38,10 @@ def execute_query(n_key, query, history):
         if len(result_df) == 0:
             error_msg = str(db.logger.get_last_message())
             try:
-                error_msg = error_msg.split(") ")[1].split("\n\n")[0] # used for psycopg2 error messages
+                error_msg = error_msg.split(") ")[1].split("\n\n")[0]
             except:
                 pass
-            if error_msg != "df_query: " + query:  # I use the fact that df_query logs all commands
+            if error_msg != "df_query: " + query:
                 return history + [ html.Span("error ", style={'color': 'red'}), html.Pre(error_msg), html.Br() ], query
         return history + [html.Pre([html.B(query), result_df.to_string()]), html.Br()], ""
     except Exception as e:

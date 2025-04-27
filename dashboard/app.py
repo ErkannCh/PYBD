@@ -9,7 +9,7 @@ import dash_bootstrap_components as dbc
 
 import timescaledb_model as tsdb
 
-db = tsdb.TimescaleStockMarketModel('bourse', 'ricou', 'db', 'monmdp')        # inside docker
+db = tsdb.TimescaleStockMarketModel('bourse', 'ricou', 'db', 'monmdp')
 external_stylesheets=[dbc.themes.BOOTSTRAP]
 app = dash.Dash(__name__,  title="Bourse", suppress_callback_exceptions=True,
                 external_stylesheets=external_stylesheets, assets_ignore='style.css?v=1.0')
@@ -18,7 +18,7 @@ app.daydf = pd.DataFrame()
 app.comp_names = []
 server = app.server
 
-from index import layout  # Not before app is defined since we use it
+from index import layout
 app.layout = layout
 
 if __name__ == '__main__':

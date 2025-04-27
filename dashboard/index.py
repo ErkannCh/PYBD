@@ -13,7 +13,6 @@ from tabs.tab3 import tab3_layout
 
 from app import app, db
 
-# Création de la présentation Dash
 layout = dbc.Container([
     html.H1("Un joli titre"),
 
@@ -31,7 +30,6 @@ layout = dbc.Container([
     html.Div(id="tabs-content"),
 ])
 
-# Callback to update the dropdown options based on input text
 @app.callback(
     ddep.Output("tabs-content", "children"),
     [ddep.Input("tabs-example", "active_tab")],

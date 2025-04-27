@@ -274,7 +274,6 @@ def update_price_chart(symbols, start_date, end_date, chart_type, yaxis_type, te
             avg_loss = loss.rolling(window=14).mean()
             rs = avg_gain / avg_loss
             df["RSI"] = 100 - (100 / (1 + rs))
-            # RSI is best on a secondary y-axis (but for now just add below price)
             fig.add_trace(go.Scatter(
                 x=df["date"],
                 y=df["RSI"],
