@@ -161,6 +161,15 @@ def fill_missing_daystocks(start, end, db: TSDB):
     db.commit()
     print(f"✓ {len(to_insert)} jours manquants remplis depuis Boursorama.")
 
+def store_files_done(files: list[str], db: TSDB) -> None:
+    for path in files:
+        db.execute(
+			"INSERT INTO file_done (name) VALUES (%s) ON CONFLICT (name) DO NOTHING;",
+			(path,),
+			commit=True
+		)
+    print(f"✓ {len(files)} fichier insérés dans file_done.")
+            
 def store_markets(db: TSDB):
     """
     Truncate and reload the 'markets' table using initial_markets_data
@@ -243,6 +252,7 @@ def store_files(start: str, end: str, website: str, db: TSDB):
     start_dt = pd.to_datetime(start)
     end_dt   = pd.to_datetime(end)
     files = get_all_files(website, start_dt, end_dt)
+    store_files_done(files, db)
     if website == "euronext":
         store_companies(files, db)
         map_df = db.df_query("SELECT id, euronext AS symbol FROM companies")
@@ -279,6 +289,7 @@ if __name__ == "__main__":
     start_date = "2020-06-15"
     end_date = "2020-06-20"
     store_markets(db)
+    db.execute("TRUNCATE TABLE file_done;", commit=True)
     store_files(start_date, end_date, "euronext", db)
     store_files(start_date, end_date, "bourso", db)
     fill_missing_daystocks(start_date, end_date, db)
