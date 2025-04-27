@@ -224,9 +224,6 @@ def store_companies(files: list[str], db: TSDB):
         "sector2"   : None,
         "sector3"   : None,
     })
-    db.execute("TRUNCATE TABLE companies CASCADE;", commit=True)
-    db.execute("TRUNCATE TABLE daystocks, stocks RESTART IDENTITY CASCADE;", commit=True)
-    db.execute("ALTER SEQUENCE company_id_seq RESTART WITH 1;", commit=True)
     db.df_write(df_comp, "companies", if_exists="append", index=False)
     db.commit()
     #print(f"✓ {len(df_comp)} entreprises insérées dans companies.")
@@ -320,7 +317,6 @@ def cycle(start: str, end: str):
             chunk_end.strftime('%Y-%m-%d')
         ))
         print(chunks)
-        store_files(current.strftime('%Y-%m-%d'), chunk_end.strftime('%Y-%m-%d'), "euronext", db)
         store_files(current.strftime('%Y-%m-%d'), chunk_end.strftime('%Y-%m-%d'), "bourso", db)
         fill_missing_daystocks(current.strftime('%Y-%m-%d'), chunk_end.strftime('%Y-%m-%d'), db)
         current = next_month
@@ -330,9 +326,10 @@ if __name__ == "__main__":
     print("Go Extract Transform and Load")
     pd.set_option("display.max_columns", None)
     db = TSDB("bourse", "ricou", "db", "monmdp", remove_all=True)
-    start_date = "2020-08-15"
-    end_date = "2020-10-20"
+    start_date = "2020-01-01"
+    end_date = "2025-12-31"
     db.execute("TRUNCATE TABLE file_done;", commit=True)
+    store_files(start_date, end_date, "euronext", db)
     cycle(start_date, end_date)
     store_markets(db)
     # store_files(start_date, end_date, "euronext", db)
