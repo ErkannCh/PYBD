@@ -7,9 +7,6 @@ import dash_bootstrap_components as dbc
 
 from app import app, db
 
-# -------------------------------------------------------------------
-# Préparer la liste des options pour le Dropdown
-# -------------------------------------------------------------------
 _comp_df = db.df_query(
     """
     SELECT DISTINCT c.id, c.symbol, c.name
@@ -35,9 +32,6 @@ for _, row in _comp_df.iterrows():
             "value": symbol
         })
 
-# -------------------------------------------------------------------
-# Layout de Tab 2
-# -------------------------------------------------------------------
 tab2_layout = html.Div([
     html.Div([
         html.H1("Tab2 - Données brutes"),
@@ -47,7 +41,7 @@ tab2_layout = html.Div([
                 dcc.Dropdown(
                     id='tab2-symbol-dropdown',
                     options=_symbol_options,
-                    multi=False,  # <= IMPORTANT : ici maintenant c'est multi=False !
+                    multi=False,
                     placeholder="Choisir une action",
                     clearable=False,
                 )
@@ -68,13 +62,9 @@ tab2_layout = html.Div([
     ]),
 ])
 
-# -------------------------------------------------------------------
-# Helper function: Build HTML table
-# -------------------------------------------------------------------
 def generate_html_table(df: pd.DataFrame):
     """Create a full HTML table from a DataFrame, formatted in French"""
 
-    # Renommer les colonnes pour affichage
     rename_columns = {
         "symbol": "Action",
         "date": "Date",
@@ -87,11 +77,9 @@ def generate_html_table(df: pd.DataFrame):
     }
     df_display = df.rename(columns=rename_columns)
 
-    # Réduction de la précision de l'écart type à 2 décimales
     if "Écart type" in df_display.columns:
         df_display["Écart type"] = df_display["Écart type"].round(2)
 
-    # Formater la date proprement sans heure
     if "Date" in df_display.columns:
         df_display["Date"] = pd.to_datetime(df_display["Date"]).dt.date
 
@@ -116,10 +104,6 @@ def generate_html_table(df: pd.DataFrame):
         "padding": "5px"
     })
 
-# -------------------------------------------------------------------
-# Callback pour charger et afficher les données brutes
-# -------------------------------------------------------------------
-
 
 @app.callback(
     Output('tab2-table-container', 'children'),
@@ -130,8 +114,6 @@ def generate_html_table(df: pd.DataFrame):
 def update_table(selected_symbol, start_date, end_date):
     if not selected_symbol:
         return html.P("Veuillez sélectionner une action.")
-
-    # Build SQL query
     query = """
         SELECT c.symbol, s.date, s.open, s.high, s.low, s.close, s.volume
         FROM daystocks s
@@ -139,20 +121,14 @@ def update_table(selected_symbol, start_date, end_date):
         WHERE c.symbol = %s
     """
     params = [selected_symbol]
-
     if start_date and end_date:
         query += " AND s.date BETWEEN %s AND %s"
         params.extend([start_date, end_date])
 
-    query += " ORDER BY s.date ASC"  # Tri croissant
-
-    # Execute the query
+    query += " ORDER BY s.date ASC" 
     df = db.df_query(query, params=tuple(params))
-
     if df.empty:
         return html.P("Aucune donnée disponible pour cette sélection.")
-
-    # Calcul de l'écart type glissant sur 7 jours
     df['écart_type'] = df['close'].rolling(window=7, center=True, min_periods=1).std()
 
     return generate_html_table(df)

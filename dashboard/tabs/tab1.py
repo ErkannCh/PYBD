@@ -9,10 +9,6 @@ import plotly.colors as pc
 
 from app import app, db
 
-
-# -------------------------------------------------------------------
-# Préparer la liste des options (symbol + nom) pour le Dropdown
-# -------------------------------------------------------------------
 _comp_df = db.df_query(
     """
     SELECT DISTINCT c.id, c.symbol, c.name
@@ -33,26 +29,17 @@ _symbol_options = []
 for _, row in _comp_df.iterrows():
     symbol = str(row.symbol).strip()
     name = str(row.name).strip()
-
-    # Vérifie que le symbol et le name existent et sont propres
     if symbol and name and symbol.lower() != "none" and name.lower() != "none":
         _symbol_options.append({
             "label": f"{symbol} – {name}",
             "value": symbol
         })
 
-
-
-# -------------------------------------------------------------------
-# Layout du premier onglet
-# -------------------------------------------------------------------
 tab1_layout = html.Div([
     html.Br(),
     html.Div(
         className="d-flex flex-wrap",
         children=[
-
-            # Choix de l'action
             html.Div([
                 html.Label("Action"),
                 dcc.Dropdown(
@@ -60,13 +47,12 @@ tab1_layout = html.Div([
                     options=_symbol_options,
                     value=[],
                     placeholder="Sélectionnez une action",
-                    multi=True,   # <-- Add this
+                    multi=True,
                     clearable=False,
                     style={"minWidth": "200px"}
                 )
             ], style={"marginRight": "2rem"}),
 
-            # Choix de la période
             html.Div([
                 html.Label("Période"),
                 dcc.DatePickerRange(
@@ -78,7 +64,6 @@ tab1_layout = html.Div([
             ], style={"marginRight": "2rem"}),
 
 
-            # Ligne ou Chandeliers
             html.Div([
                 html.Label("Type de graphique"),
                 dcc.RadioItems(
@@ -95,7 +80,6 @@ tab1_layout = html.Div([
 
             
 
-            # Échelle Y
             html.Div([
                 html.Label("Échelle Y"),
                 dcc.RadioItems(
@@ -113,16 +97,8 @@ tab1_layout = html.Div([
     ),
 
     html.Hr(),
-
-    # Graphique
     dcc.Graph(id="price-chart", config={"displayModeBar": True})
 ])
-
-
-# -------------------------------------------------------------------
-# Callback pour mettre à jour le graphique (daystocks ou stocks)
-# -------------------------------------------------------------------
-
 
 @app.callback(
     Output("symbol-dropdown", "value"),
@@ -133,17 +109,12 @@ tab1_layout = html.Div([
 def update_dropdown_from_legend(restyle_data, selected_symbols):
     if restyle_data is None:
         return selected_symbols
-
-    # Exemple de restyle_data :
-    # [{'visible': ['legendonly']}, [2]]  --> ici, on a cliqué sur la trace index 2
-
     changed_visibility = restyle_data[0].get('visible', [])
     changed_indices = restyle_data[1]
 
     if not changed_visibility or not changed_indices:
         return selected_symbols
 
-    # "legendonly" signifie que la courbe a été désactivée
     symbols_to_remove = []
     if changed_visibility[0] == 'legendonly':
         for idx in changed_indices:
@@ -151,7 +122,6 @@ def update_dropdown_from_legend(restyle_data, selected_symbols):
                 symbol = selected_symbols[idx]
                 symbols_to_remove.append(symbol)
 
-    # Enlève les symbols désactivés
     new_selection = [s for s in selected_symbols if s not in symbols_to_remove]
     return new_selection
 
@@ -166,7 +136,6 @@ def update_dropdown_from_legend(restyle_data, selected_symbols):
     ],
 )
 def update_price_chart(symbols, start_date, end_date, chart_type, yaxis_type):
-    # symbols is now a list!
     if not symbols or not start_date or not end_date:
         return go.Figure()
 
@@ -184,7 +153,6 @@ def update_price_chart(symbols, start_date, end_date, chart_type, yaxis_type):
         """
         df = db.df_query(q, parse_dates=["date"])
 
-        # Skip if no data
         if df.empty:
             continue
 
@@ -207,54 +175,48 @@ def update_price_chart(symbols, start_date, end_date, chart_type, yaxis_type):
             ))
 
         elif chart_type == "bollinger":
-            # Calcul des bandes de Bollinger
-            window = 20  # Période de calcul
+            window = 20
             if len(df) >= window:
                 df['rolling_mean'] = df['close'].rolling(window=window).mean()
                 df['rolling_std'] = df['close'].rolling(window=window).std()
                 df['upper_band'] = df['rolling_mean'] + (2 * df['rolling_std'])
                 df['lower_band'] = df['rolling_mean'] - (2 * df['rolling_std'])
 
-                # Associer une couleur par action
                 color = colors[symbols.index(symbol) % len(colors)]
                 legend_group_name = f"bollinger_{symbol}"
 
-                # Moyenne mobile (la seule visible dans la légende)
                 fig.add_trace(go.Scatter(
                     x=df["date"],
                     y=df["rolling_mean"],
                     mode="lines",
-                    line=dict(color=color, dash="dash"),  # couleur unique
-                    name=symbol,  # Visible dans la légende
+                    line=dict(color=color, dash="dash"),
+                    name=symbol,
                     legendgroup=legend_group_name,
                     showlegend=True
                 ))
 
-                # Bande supérieure
                 fig.add_trace(go.Scatter(
                     x=df["date"],
                     y=df["upper_band"],
                     mode="lines",
-                    line=dict(color=color, width=0.5),  # même couleur, plus fin
+                    line=dict(color=color, width=0.5),
                     name=f"{symbol} - Upper",
                     legendgroup=legend_group_name,
                     showlegend=False
                 ))
 
-                # Bande inférieure
                 fig.add_trace(go.Scatter(
                     x=df["date"],
                     y=df["lower_band"],
                     mode="lines",
-                    line=dict(color=color, width=0.5),  # même couleur
+                    line=dict(color=color, width=0.5),
                     name=f"{symbol} - Lower",
                     legendgroup=legend_group_name,
                     fill='tonexty',
-                    fillcolor='rgba(0,0,0,0)',  # transparent ou léger
+                    fillcolor='rgba(0,0,0,0)',
                     showlegend=False
                 ))
 
-                # Close
                 fig.add_trace(go.Scatter(
                     x=df["date"],
                     y=df["close"],
@@ -266,10 +228,6 @@ def update_price_chart(symbols, start_date, end_date, chart_type, yaxis_type):
                 ))
 
 
-
-
-
-    # Mise en forme générale
     fig.update_layout(
         title={
             'text': (
@@ -287,6 +245,5 @@ def update_price_chart(symbols, start_date, end_date, chart_type, yaxis_type):
         legend_title="Actions",
         showlegend=True,
     )
-
 
     return fig
