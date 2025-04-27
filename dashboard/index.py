@@ -14,7 +14,7 @@ from tabs.tab3 import tab3_layout
 from app import app, db
 
 layout = dbc.Container([
-    html.H1("Un joli titre"),
+    html.H1("Traiding View"),
 
 
 
