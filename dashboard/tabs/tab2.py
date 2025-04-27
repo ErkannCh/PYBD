@@ -40,11 +40,12 @@ tab2_layout = html.Div([
             dbc.Col([
                 dcc.Dropdown(
                     id='tab2-symbol-dropdown',
-                    options=_symbol_options,
+                    options=[],
                     multi=False,
                     placeholder="Choisir une action",
                     clearable=False,
                 )
+
             ], width=6),
             dbc.Col([
                 dcc.DatePickerRange(
@@ -106,11 +107,14 @@ def generate_html_table(df: pd.DataFrame):
 
 @app.callback(
     Output('tab2-table-container', 'children'),
-    Input('tab2-symbol-dropdown', 'value'),
-    Input('tab2-date-picker', 'start_date'),
-    Input('tab2-date-picker', 'end_date'),
+    [
+        Input('tab2-symbol-dropdown', 'value'),
+        Input('tab2-date-picker', 'start_date'),
+        Input('tab2-date-picker', 'end_date'),
+    ]
 )
 def update_table(selected_symbol, start_date, end_date):
+
     if not selected_symbol:
         return html.P("Veuillez sélectionner une action.")
 
@@ -135,4 +139,37 @@ def update_table(selected_symbol, start_date, end_date):
     df['écart_type'] = df['close'].rolling(window=7, center=True, min_periods=1).std()
 
     return generate_html_table(df)
+
+
+@app.callback(
+    Output('tab2-symbol-dropdown', 'options'),
+    Input('tab2-symbol-dropdown', 'id'),  # dummy input just to trigger on page load
+)
+def load_dropdown_options(_):
+    _comp_df = db.df_query(
+        """
+        SELECT DISTINCT c.id, c.symbol, c.name
+        FROM companies c
+        WHERE c.symbol IS NOT NULL AND c.symbol != ''
+          AND c.id IN (
+            SELECT cid FROM daystocks
+            UNION
+            SELECT cid FROM stocks
+          )
+        ORDER BY c.symbol
+        """
+    )
+
+    options = []
+    for _, row in _comp_df.iterrows():
+        symbol = str(row.symbol).strip()
+        name = str(row.name).strip()
+
+        if symbol and name and symbol.lower() != "none" and name.lower() != "none":
+            options.append({
+                "label": f"{symbol} – {name}",
+                "value": symbol
+            })
+    return options
+
 

@@ -49,7 +49,7 @@ tab1_layout = html.Div([
                 html.Label("Action"),
                 dcc.Dropdown(
                     id="symbol-dropdown",
-                    options=_symbol_options,
+                    options= [],
                     value=[],
                     placeholder="Sélectionnez une action",
                     multi=True,
@@ -299,3 +299,35 @@ def update_price_chart(symbols, start_date, end_date, chart_type, yaxis_type, te
 
 
     return fig
+
+
+@app.callback(
+    Output('symbol-dropdown', 'options'),
+    Input('symbol-dropdown', 'id'),
+)
+def load_dropdown_options(_):
+    _comp_df = db.df_query(
+        """
+        SELECT DISTINCT c.id, c.symbol, c.name
+        FROM companies c
+        WHERE c.symbol IS NOT NULL AND c.symbol != ''
+          AND c.id IN (
+            SELECT cid FROM daystocks
+            UNION
+            SELECT cid FROM stocks
+          )
+        ORDER BY c.symbol
+        """
+    )
+
+    options = []
+    for _, row in _comp_df.iterrows():
+        symbol = str(row.symbol).strip()
+        name = str(row.name).strip()
+
+        if symbol and name and symbol.lower() != "none" and name.lower() != "none":
+            options.append({
+                "label": f"{symbol} – {name}",
+                "value": symbol
+            })
+    return options
