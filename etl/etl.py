@@ -108,20 +108,19 @@ def timer_decorator(func):
 
 @timer_decorator
 def get_all_files(website: str, start, end) -> list[str]:
-    result = []
     if website == "euronext":
         pattern = os.path.join(HOME, website, "*")
     else:
         pattern = os.path.join(HOME, website, "20*", "*")
+
     files = glob.glob(pattern, recursive=True)
-    t0 = time.time()
-    for file in files:  
-        m = re.search(r"(\d{4}-\d{2}-\d{2})", os.path.basename(file))
-        file_date = pd.to_datetime(m.group(1), errors='coerce')
-        if start <= file_date <= end:
-            result.append(file)
-    print(f"{time.time()-t0:.2f}s")
-    return sorted(result)
+    df = pd.DataFrame({"filepath": files})
+    df["filename"] = df["filepath"].str.split(os.sep).str[-1]
+    df["date_str"] = df["filename"].str.extract(r"(\d{4}-\d{2}-\d{2})", expand=False)
+    df["file_date"] = pd.to_datetime(df["date_str"], errors="coerce")
+    mask = df["file_date"].between(start, end)
+    result = df.loc[mask, "filepath"]
+    return sorted(result.tolist())
 
 
 @timer_decorator
